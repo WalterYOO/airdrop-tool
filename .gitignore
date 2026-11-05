@@ -1,0 +1,11 @@
+# Build artifacts
+/airdrop
+/click
+*.o
+
+# Local backups
+*.orig
+*.bak
+
+# macOS
+.DS_Store
