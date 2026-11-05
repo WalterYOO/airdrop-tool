@@ -123,3 +123,8 @@ skills/airdrop-tool/
 │   └── click.swift
 └── scripts/send.sh   # 一条命令完成发送
 ```
+
+## License
+
+MIT © 2026 Walter LIU
+
