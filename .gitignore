@@ -1,12 +1,5 @@
 # Build artifacts
-/airdrop
-/click
 skills/airdrop-tool/bin/
-*.o
-
-# Local backups
-*.orig
-*.bak
 
 # macOS
 .DS_Store
