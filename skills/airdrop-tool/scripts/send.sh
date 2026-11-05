@@ -7,12 +7,13 @@ if [ "$#" -lt 2 ]; then
 fi
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DEFAULT_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
-ROOT=${AIRDROP_TOOL_ROOT:-$DEFAULT_ROOT}
+SKILL_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
+ROOT=${AIRDROP_TOOL_ROOT:-$SKILL_DIR}
+BIN="$ROOT/bin"
 
-if [ ! -f "$ROOT/Makefile" ]; then
-  echo "cannot locate the airdrop_tool repository root (looked in $ROOT)" >&2
-  echo "set AIRDROP_TOOL_ROOT to the checkout path" >&2
+if [ ! -f "$ROOT/Makefile" ] || [ ! -d "$ROOT/src" ]; then
+  echo "cannot locate the airdrop-tool skill directory (looked in $ROOT)" >&2
+  echo "set AIRDROP_TOOL_ROOT to the skill directory" >&2
   exit 2
 fi
 
@@ -36,12 +37,11 @@ if ! command -v swiftc >/dev/null 2>&1; then
   exit 2
 fi
 
-for bin in airdrop click; do
-  make -C "$ROOT" "$bin" >/dev/null
-done
+# Incremental: make rebuilds only when the sources changed.
+make -C "$ROOT" >/dev/null
 
 set +e
-"$ROOT/click" --check >/dev/null 2>&1
+"$BIN/click" --check >/dev/null 2>&1
 CHECK=$?
 set -e
 if [ "$CHECK" -eq 1 ]; then
@@ -52,7 +52,7 @@ elif [ "$CHECK" -ne 0 ]; then
   exit "$CHECK"
 fi
 
-"$ROOT/airdrop" "$@" &
+"$BIN/airdrop" "$@" &
 APP=$!
 cleanup() {
   if kill -0 "$APP" 2>/dev/null; then
@@ -62,7 +62,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$ROOT/click" --device "$DEVICE" --pid "$APP" \
+"$BIN/click" --device "$DEVICE" --pid "$APP" \
   --wait "${AIRDROP_WAIT:-15}" \
   --timeout "${AIRDROP_TIMEOUT:-600}" &
 CLICK=$!

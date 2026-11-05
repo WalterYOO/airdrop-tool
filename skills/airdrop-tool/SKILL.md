@@ -13,35 +13,63 @@ the transfer status. Two small Swift CLIs cooperate:
 - `click` finds the target device in the panel through the Accessibility API,
   presses it, watches the transfer status, and dismisses the panel.
 
+## Install
+
+The skill is self-contained: it ships the Swift sources, a `Makefile`, the
+`send.sh` wrapper, and this document. Binaries are **not** committed because
+they are architecture-specific; they are built into `bin/` on demand.
+
+```bash
+# from the repository
+cp -R skills/airdrop-tool ~/.claude/skills/airdrop-tool
+make -C ~/.claude/skills/airdrop-tool
+```
+
+Alternatively symlink the directory instead of copying it. `scripts/send.sh`
+also runs `make` automatically, so a separate build step is optional.
+
+Layout:
+
+```
+airdrop-tool/
+├── SKILL.md
+├── Makefile          # builds src/*.swift into bin/
+├── src/
+│   ├── airdrop.swift
+│   └── click.swift
+├── scripts/send.sh   # one-command wrapper
+└── bin/              # created by make; not committed
+```
+
 ## Requirements
 
 - macOS with AirDrop enabled and at least one target device nearby.
-- Xcode Command Line Tools (`xcode-select --install`) so `swiftc` is available
-  for the build.
+- Xcode Command Line Tools (`xcode-select --install`) so `swiftc` is available.
 - **Accessibility permission** for the process running the commands (Terminal,
   iTerm, or the agent host): System Settings → Privacy & Security →
-  Accessibility. `./click --check` exits non-zero when permission is missing.
+  Accessibility. `bin/click --check` exits non-zero when permission is missing.
 
-Build once from the repository root:
+Build from the skill directory:
 
 ```bash
 make
 ```
 
-This produces `./airdrop` and `./click`.
+This produces `bin/airdrop` and `bin/click`.
 
 ## Quick start
 
 ```bash
-./airdrop ~/Pictures/photo.jpg &
-./click --device "Math的iPad"
+cd <skill-directory>
+bin/airdrop ~/Pictures/photo.jpg &
+bin/click --device "Math的iPad"
 ```
 
 Or the wrapper, which validates inputs, builds incrementally, launches
 `airdrop`, runs `click`, and cleans up on failure:
 
 ```bash
-skills/airdrop-tool/scripts/send.sh "Math的iPad" ~/Pictures/photo.jpg
+scripts/send.sh "Math的iPad" ~/Pictures/photo.jpg
 ```
 
 The `airdrop` process must stay alive while the panel is open, so start it with
@@ -96,8 +124,8 @@ Lists the devices visible in an open AirDrop panel. stdout contains only
 `device:` lines; diagnostics go to stderr.
 
 ```bash
-./airdrop /tmp/airdrop-probe.txt &   # any existing file opens the panel
-./click --list
+bin/airdrop /tmp/airdrop-probe.txt &   # any existing file opens the panel
+bin/click --list
 kill $!
 ```
 
@@ -134,11 +162,11 @@ device rows (see below).
 
 ## Wrapper
 
-`skills/airdrop-tool/scripts/send.sh <device> <file|dir>...`
+`scripts/send.sh <device> <file|dir>...`
 
 - Overrides: `AIRDROP_WAIT` (default 15), `AIRDROP_TIMEOUT` (default 600),
-  `AIRDROP_TOOL_ROOT` (checkout path, if the script was moved).
-- Rebuilds with `make` on every run (incremental, so it is cheap).
+  `AIRDROP_TOOL_ROOT` (skill directory, if the script was moved).
+- Runs `make` on every invocation (incremental, so it is cheap).
 - Aborts with the real exit code if `airdrop` dies before the click finishes.
 - Kills the background `airdrop` on any failure.
 
@@ -149,11 +177,12 @@ device rows (see below).
 | `no AirDrop devices found` | Panel not open yet, or the peer is asleep / off AirDrop. Raise `--wait`, wake the device. |
 | `device 'X' not found. available: ...` | Name mismatch; device list flapped. Use `--list` to see exact names. |
 | `device 'X' is ambiguous` | Two devices share the name or substring; use the full name. |
-| Nothing happens when pressing | Accessibility permission missing; run `./click --check`. |
+| Nothing happens when pressing | Accessibility permission missing; run `bin/click --check`. |
 | `timed out waiting for transfer` | Receiver never accepted. `Sent` only appears after acceptance. |
 | `panel closed before the transfer finished` | The panel was dismissed (Cancel, Escape) or `airdrop` died. |
 | Process lingers | The panel is still open; the total timeout eventually exits. Prefer the wrapper, which cleans up. |
 | `airdrop-unavailable` | AirDrop is disabled or the sharing service is missing. |
+| `swiftc not found` | Install Xcode Command Line Tools: `xcode-select --install`. |
 
 ## Notes
 
