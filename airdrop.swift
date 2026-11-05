@@ -1,6 +1,12 @@
 import AppKit
 import ApplicationServices
 
+func envSeconds(_ name: String, default fallback: Double) -> Double {
+    guard let raw = ProcessInfo.processInfo.environment[name],
+          let value = Double(raw), value > 0 else { return fallback }
+    return value
+}
+
 // MARK: - Share lifecycle
 
 final class AirdropRunner: NSObject, NSApplicationDelegate, NSSharingServiceDelegate {
@@ -26,29 +32,29 @@ final class AirdropRunner: NSObject, NSApplicationDelegate, NSSharingServiceDele
         log("perform")
         service.perform(withItems: urls)
 
+        let totalTimeout = envSeconds("AIRDROP_TOTAL_TIMEOUT", default: 1800)
+        let panelTimeout = envSeconds("AIRDROP_PANEL_TIMEOUT", default: 30)
+
         // Fallback: never linger forever if no delegate callback ever arrives.
-        Timer.scheduledTimer(withTimeInterval: 1800, repeats: false) { [weak self] _ in
+        Timer.scheduledTimer(withTimeInterval: totalTimeout, repeats: false) { [weak self] _ in
             self?.finish(code: 1, message: "airdrop-timeout")
         }
 
-        // If the share panel never shows up, don't sit around for 30 minutes.
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+        // If the share panel never shows up, don't sit around for the full timeout.
+        Timer.scheduledTimer(withTimeInterval: panelTimeout, repeats: false) { [weak self] _ in
             guard let self = self, !self.panelSeen else { return }
             self.finish(code: 1, message: "airdrop-no-panel")
         }
 
-        // Track when the share panel goes away.
+        // Track when the share panel goes away. This process has no other
+        // windows, so any window means the panel is up. The title is localized
+        // and must not be used as the identifier.
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
             guard let self = self, !self.panelClosed else { timer.invalidate(); return }
             let axApp = AXUIElementCreateApplication(getpid())
             var raw: AnyObject?
             AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &raw)
-            let windows = (raw as? [AXUIElement]) ?? []
-            let hasPanel = windows.contains { window in
-                var title: AnyObject?
-                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title)
-                return (title as? String) == "AirDrop"
-            }
+            let hasPanel = !((raw as? [AXUIElement]) ?? []).isEmpty
             let elapsed = String(format: "%.1f", Date().timeIntervalSince(self.startedAt))
             if hasPanel && !self.panelSeen {
                 self.panelSeen = true
@@ -62,7 +68,7 @@ final class AirdropRunner: NSObject, NSApplicationDelegate, NSSharingServiceDele
                 // disappearance is the completion signal. Give the delegate a
                 // moment to report a cancel/failure first.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.finish(code: 0, message: "airdrop-finished")
+                    self?.finish(code: 0, message: "airdrop-dismissed")
                 }
             }
         }
@@ -80,7 +86,9 @@ final class AirdropRunner: NSObject, NSApplicationDelegate, NSSharingServiceDele
     func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: Error) {
         log("didFailToShareItems: \(error.localizedDescription)")
         let ns = error as NSError
-        if ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError {
+        let cancelled = (ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError)
+            || (ns.domain == NSOSStatusErrorDomain && ns.code == -128)  // userCanceledErr
+        if cancelled {
             finish(code: 130, message: "airdrop-cancelled")
         } else {
             finish(code: 1, message: "airdrop-failed: \(error.localizedDescription)")
@@ -106,9 +114,19 @@ final class AirdropRunner: NSObject, NSApplicationDelegate, NSSharingServiceDele
 
 // MARK: - CLI
 
+let usage = "usage: airdrop <file|dir>... | --check | --help\n"
 let args = Array(CommandLine.arguments.dropFirst())
 
-if args == ["--check"] {
+if args.contains("--help") || args.contains("-h") {
+    print("usage: airdrop <file|dir>... | --check | --help")
+    exit(0)
+}
+
+if args.first == "--check" {
+    guard args.count == 1 else {
+        FileHandle.standardError.write(usage.data(using: .utf8)!)
+        exit(2)
+    }
     _ = NSApplication.shared
     if let s = NSSharingService(named: .sendViaAirDrop) {
         print("airdrop-available: \(s.title)")
@@ -120,14 +138,20 @@ if args == ["--check"] {
 }
 
 guard !args.isEmpty else {
-    FileHandle.standardError.write("usage: airdrop <file|dir>... | --check\n".data(using: .utf8)!)
+    FileHandle.standardError.write(usage.data(using: .utf8)!)
     exit(2)
 }
 
 let urls = args.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
-for u in urls where !FileManager.default.fileExists(atPath: u.path) {
-    FileHandle.standardError.write("missing: \(u.path)\n".data(using: .utf8)!)
-    exit(2)
+for u in urls {
+    guard FileManager.default.fileExists(atPath: u.path) else {
+        FileHandle.standardError.write("missing: \(u.path)\n".data(using: .utf8)!)
+        exit(2)
+    }
+    guard FileManager.default.isReadableFile(atPath: u.path) else {
+        FileHandle.standardError.write("unreadable: \(u.path)\n".data(using: .utf8)!)
+        exit(2)
+    }
 }
 
 let app = NSApplication.shared
